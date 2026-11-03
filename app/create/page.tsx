@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useSyncExternalStore, type SubmitEvent } from "react";
+import Link from "next/link";
 import Button from "@/components/ui/button";
 
 type Transaction = {
@@ -126,7 +127,7 @@ export default function Create() {
     {/* Temporary header, we'll change this in the future */}
       <header className="border-b border-stone-200 bg-white">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4 sm:px-8">
-          <a href="/create" className="flex items-center gap-3" aria-label="Início">
+          <Link href="/" className="flex items-center gap-3" aria-label="Início">
             <span className="grid size-9 place-items-center rounded-xl bg-blue-700 text-sm font-semibold text-white">
               F
             </span>
@@ -134,8 +135,13 @@ export default function Create() {
               <span className="block text-sm font-semibold">Finanças</span>
               <span className="block text-xs text-stone-500">Controle pessoal</span>
             </span>
-          </a>
-          <span className="text-sm font-medium text-stone-600">Lançamentos</span>
+          </Link>
+          <Link
+            href="/"
+            className="text-sm font-medium text-blue-700 hover:text-blue-800"
+          >
+            Início
+          </Link>
         </div>
       </header>
 
