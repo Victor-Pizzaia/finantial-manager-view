@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useSyncExternalStore, type SubmitEvent } from "react";
+import { useEffect, useState, useSyncExternalStore, type SubmitEvent } from "react";
 import Link from "next/link";
 import Button from "@/components/ui/button";
 
@@ -20,6 +20,11 @@ type Transaction = {
   remaining: number;
   endDate: string;
   paid: boolean;
+};
+
+type Category = {
+  id: string;
+  name: string;
 };
 
 const months = [
@@ -49,20 +54,6 @@ function getServerMonth() {
   return "";
 }
 
-const categories = [
-  "Alimentação",
-  "Transporte",
-  "Lazer",
-  "Educação",
-  "Moradia",
-  "Saúde",
-  "Pessoal",
-  "Investimentos",
-  "Emergência",
-  "Taxas",
-  "Mercado"
-]
-
 const inputClassName =
   "mt-1.5 min-h-11 w-full rounded-lg border border-stone-300 bg-white px-3 text-sm text-stone-900 outline-none transition focus:border-blue-600 focus:ring-2 focus:ring-blue-600/15";
 
@@ -73,6 +64,11 @@ const money = new Intl.NumberFormat("pt-BR", {
 
 export default function Create() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [categoriesError, setCategoriesError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const [submitSuccess, setSubmitSuccess] = useState(false);
   const currentMonth = useSyncExternalStore(
     subscribeToMonthChange,
     getCurrentMonth,
@@ -92,34 +88,132 @@ export default function Create() {
   const total = (Number(value) || 0) * (Number(installments) || 0);
   const remaining = total - (Number(paidAmount) || 0);
 
-  function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
+  useEffect(() => {
+    let active = true;
+
+    async function loadCategories() {
+      try {
+        const response = await fetch("/api/categories");
+        const body: unknown = await response.json();
+        if (!response.ok) {
+          throw new Error(
+            typeof body === "object" && body !== null && "message" in body
+              ? String(body.message)
+              : "Não foi possível carregar as categorias.",
+          );
+        }
+        if (
+          !Array.isArray(body) ||
+          !body.every(
+            (item) =>
+              typeof item === "object" &&
+              item !== null &&
+              "id" in item &&
+              typeof item.id === "string" &&
+              "name" in item &&
+              typeof item.name === "string",
+          )
+        ) {
+          throw new Error("O backend retornou categorias em formato inválido.");
+        }
+        if (active) setCategories(body);
+      } catch (error) {
+        if (active) {
+          setCategoriesError(
+            error instanceof Error
+              ? error.message
+              : "Não foi possível carregar as categorias.",
+          );
+        }
+      }
+    }
+
+    void loadCategories();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
+    const name = String(data.get("name"));
+    const type = String(data.get("type"));
+    const categoryId = String(data.get("category"));
+    const selectedCategory = categories.find((category) => category.id === categoryId);
+    const amount = Number(data.get("value"));
+    const installmentCount = Number(data.get("installments"));
+    const paidAmountValue = Number(data.get("paidAmount"));
 
-    const transaction: Transaction = {
-      id: crypto.randomUUID(),
-      name: String(data.get("name")),
-      type: String(data.get("type")),
-      inclusionDate: String(data.get("inclusionDate")),
-      month: String(data.get("month")),
-      year: String(data.get("year")),
-      category: String(data.get("category")),
-      installments: Number(data.get("installments")),
-      installmentReference: Number(data.get("installmentReference")),
-      value: Number(data.get("value")),
-      total,
-      paidAmount: Number(data.get("paidAmount")),
-      remaining,
-      endDate: String(data.get("endDate")),
-      paid: data.get("paid") === "on",
-    };
+    setIsSubmitting(true);
+    setSubmitError("");
+    setSubmitSuccess(false);
 
-    setTransactions((current) => [transaction, ...current]);
-    form.reset();
-    setValue("");
-    setInstallments("1");
-    setPaidAmount("0");
+    try {
+      const response = await fetch("/api/transactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          description: name,
+          recurrence: type,
+          amount,
+          installments: installmentCount,
+          categoryId,
+        }),
+      });
+
+      if (!response.ok) {
+        const responseText = await response.text();
+        let message = responseText || `Erro ${response.status} ao salvar.`;
+        try {
+          const errorBody: unknown = JSON.parse(responseText);
+          if (
+            typeof errorBody === "object" &&
+            errorBody !== null &&
+            "message" in errorBody &&
+            typeof errorBody.message === "string"
+          ) {
+            message = errorBody.message;
+          }
+        } catch {
+          // Keep the backend's plain-text error message.
+        }
+        throw new Error(message);
+      }
+
+      const transaction: Transaction = {
+        id: crypto.randomUUID(),
+        name,
+        type,
+        inclusionDate: String(data.get("inclusionDate")),
+        month: String(data.get("month")),
+        year: String(data.get("year")),
+        category: selectedCategory?.name ?? "",
+        installments: installmentCount,
+        installmentReference: Number(data.get("installmentReference")),
+        value: amount,
+        total,
+        paidAmount: paidAmountValue,
+        remaining,
+        endDate: String(data.get("endDate")),
+        paid: data.get("paid") === "on",
+      };
+
+      setTransactions((current) => [transaction, ...current]);
+      form.reset();
+      setValue("");
+      setInstallments("1");
+      setPaidAmount("0");
+      setSelectedMonth(null);
+      setSubmitSuccess(true);
+    } catch (error) {
+      setSubmitError(
+        error instanceof Error ? error.message : "Não foi possível salvar.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -175,9 +269,9 @@ export default function Create() {
               </label>
               <label className="text-sm font-medium">
                 Tipo
-                <select className={inputClassName} name="type" defaultValue="Recorrente">
-                  <option>Fixo</option>
-                  <option>Variável</option>
+                <select className={inputClassName} name="type" defaultValue="FIXED">
+                  <option value="FIXED">Fixo</option>
+                  <option value="VARIABLE">Variável</option>
                 </select>
               </label>
               <label className="text-sm font-medium">
@@ -217,11 +311,34 @@ export default function Create() {
               </label>
               <label className="text-sm font-medium">
                 Categoria
-                <select className={inputClassName} name="category" defaultValue="Moradia">
+                <select
+                  className={inputClassName}
+                  name="category"
+                  defaultValue=""
+                  required
+                  disabled={categories.length === 0}
+                >
+                  <option value="" disabled>
+                    {categories.length > 0
+                      ? "Selecione uma categoria"
+                      : "Nenhuma categoria disponível"}
+                  </option>
                   {categories.map((category) => (
-                    <option key={category}>{category}</option>
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
                   ))}
                 </select>
+                {categoriesError && (
+                  <span role="alert" className="mt-1 block text-xs text-red-700">
+                    Erro ao carregar categorias: {categoriesError}
+                  </span>
+                )}
+                {!categoriesError && categories.length === 0 && (
+                  <span className="mt-1 block text-xs text-stone-500">
+                    Cadastre uma categoria no backend antes de criar um lançamento.
+                  </span>
+                )}
               </label>
             </div>
           </section>
@@ -310,10 +427,22 @@ export default function Create() {
               />
               Lançamento pago
             </label>
-            <Button type="submit" className="w-full sm:w-auto">
-              Adicionar lançamento
+            <Button type="submit" disabled={isSubmitting || categories.length === 0} className="w-full sm:w-auto">
+              {isSubmitting ? "Salvando..." : "Adicionar lançamento"}
             </Button>
           </div>
+          {(submitError || submitSuccess) && (
+            <p
+              role={submitError ? "alert" : "status"}
+              className={`mt-4 text-sm ${submitError ? "text-red-700" : "text-green-700"}`}
+            >
+              {submitError || "Lançamento salvo com sucesso."}
+            </p>
+          )}
+          <p className="mt-3 text-xs text-stone-500">
+            O backend atual salva descrição, tipo, valor, quantidade de parcelas e categoria.
+            Os demais campos ainda não são persistidos.
+          </p>
         </form>
 
         <section aria-labelledby="recent-heading" className="mt-10">
@@ -362,7 +491,7 @@ export default function Create() {
             </div>
           )}
           <p className="mt-3 text-xs text-stone-500">
-            Por enquanto, os lançamentos ficam nesta tela e não são salvos após recarregar.
+            A lista acima mostra os lançamentos enviados nesta sessão.
           </p>
         </section>
       </div>
